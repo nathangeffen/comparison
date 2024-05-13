@@ -1,0 +1,10 @@
+*.csv
+*~
+abm
+*.txt
+*.lock
+*.zip
+\#*
+*\#
+runsim
+target
