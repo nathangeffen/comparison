@@ -8,3 +8,10 @@ abm
 *\#
 runsim
 target
+build.zig.zon
+main
+main.o
+zig/zig-cache/
+zig/zig-out/
+
+
