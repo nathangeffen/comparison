@@ -1,8 +1,26 @@
+// Copyright 2024 Nathan Geffen
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! This program implements a simple agent based model for the purpose of
+//! comparing programming languages.
+
 use abm;
 use num_cpus;
 use clap::Parser;
 use threadpool::ThreadPool;
 
+/// This struct handles the command line arguments.
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 struct Parameters {
@@ -36,6 +54,8 @@ struct Parameters {
     pub agent_filename: String
 }
 
+/// Runs one simulation. Called within the thread pool so has to be thread
+/// safe.
 fn one_simulation(parameters: Parameters) {
     let abm_parameters = abm::Parameters {
         agents: parameters.agents,
@@ -55,6 +75,8 @@ fn one_simulation(parameters: Parameters) {
     s.simulate();
 }
 
+/// Processes parameters, sets up thread pool and invokes the execution of the
+/// simulations.
 fn main() {
     let parameters =  Parameters::parse();
     if parameters.simulations == 0 {
