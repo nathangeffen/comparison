@@ -10,3 +10,6 @@ threadpool = "1.8.1"
 num_cpus = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 abm = { path = "abm" }
+
+[profile.release]
+debug = true

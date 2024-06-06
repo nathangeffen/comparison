@@ -1,20 +1,68 @@
-#!/bin/python
 """
 Simple agent-based simulation of an infectious disease.
 """
 
-from multiprocessing import Pool
-from enum import Enum
+# Copyright 2024 Nathan Geffen
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http:#www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This class implements a simple agent-based model simulation engine
+# for the purpose of comparing programming environments.
+
+
+from enum import Enum, auto
 import random
-import argparse
 
 
 class State(Enum):
     """ Maintains the possible states of an agent.
     """
-    SUSCEPTIBLE = 0
-    INFECTED = 1
-    DEAD = 2
+    SUSCEPTIBLE = auto()
+    INFECTIOUS = auto()
+    RECOVERED = auto()
+    VACCINATED = auto()
+    DEAD = auto()
+
+    def __str__(self):
+        return self.name[0]
+
+
+class InfectionMethod(Enum):
+    """ Determines which infection event to call in the simulation
+    """
+    BOTH = 0
+    ONE = 1
+    TWO = 2
+
+
+class Parameters:
+
+    def __init(self):
+        self.simulations = 20
+        self.agents = 10000
+        self.infections = 10
+        self.identity = 0
+        self.iterations = 365 * 4
+        self.encounters = 10
+        self.growth = 0.0001
+        self.death_prob_susceptible = 0.0001
+        self.death_prob_infectious = 0.001
+        self.recovery_prob = 0.01
+        self.vaccination_prob = 0.001
+        self.regression_prob = 0.0003
+        self.infection_method = InfectionMethod.BOTH
+        self.output_agents = 0
+        self.agent_filename = "agents.csv"
 
 
 class Agent:
@@ -29,113 +77,163 @@ class Simulation:
     """ Simple simulation engine with a few events.
     """
 
-    def __init__(self, identity, num_agents, num_infections):
+    def __init__(self, sim_num, parameters):
         """Initializes the simulation with a unique identity, initial number of
         agents and initial number of infections.
         """
-        self.identity = identity
-        self.agents = [Agent(i, State.SUSCEPTIBLE) for i in range(num_agents)]
-        for i in range(num_infections):
-            self.agents[i].state = State.INFECTED
+        self.identity = sim_num
+        self.parameters = parameters
+        self.agents = [Agent(i, State.SUSCEPTIBLE)
+                       for i in range(parameters.agents)]
         random.shuffle(self.agents)
+        for i in range(parameters.infections):
+            self.agents[i].state = State.INFECTIOUS
+        self.total_infections = parameters.infections
+        self.infection_deaths = 0
 
-    def grow(self, growth_per_day):
+    def grow(self):
         """ Event to grow the number of agents.
         """
-        num_agents = len([agent for agent in self.agents if agent.state != State.DEAD])
-        new_agents = growth_per_day * num_agents
+        num_agents = len([agent for agent in self.agents
+                          if agent.state != State.DEAD])
+        new_agents = self.parameters.growth * num_agents
         identity = len(self.agents)
         for _ in range(round(new_agents)):
             agent = Agent(identity, State.SUSCEPTIBLE)
             self.agents.append(agent)
             identity += 1
 
-
-    def infect(self, events):
-        """ Intentionally time-consuming event to infect agents.
-        Agents randomly encounter one another. If an infected
-        agent encounters a susceptible one, an
-        infection takes place.
+    def infect_method_one(self):
+        """ Simulation event that infects agents (1st of 2 methods implemented.
         """
-        for _ in range(events):
+        for _ in range(self.parameters.encounters):
             ind1 = random.randint(0, len(self.agents) - 1)
             ind2 = random.randint(0, len(self.agents) - 1)
-            if self.agents[ind1].state == State.SUSCEPTIBLE and \
-               self.agents[ind2].state == State.INFECTED:
-                self.agents[ind1].state = State.INFECTED
-            elif self.agents[ind2].state == State.SUSCEPTIBLE and \
-                 self.agents[ind1].state == State.INFECTED:
-                self.agents[ind2].state = State.INFECTED
+            if (self.agents[ind1].state == State.SUSCEPTIBLE) and \
+               (self.agents[ind2].state == State.INFECTIOUS):
+                self.agents[ind1].state = State.INFECTIOUS
+                self.total_infections += 1
+            elif (self.agents[ind2].state == State.SUSCEPTIBLE) and \
+                 (self.agents[ind1].state == State.INFECTIOUS):
+                self.agents[ind2].state = State.INFECTIOUS
 
+    def get_indices(self, state, max):
+        indices = []
+        for i in range(len(self.agents)):
+            if i >= max:
+                break
+            if self.agents[i].state == state:
+                indices.append(i)
+        return indices
 
-    def die(self, death_rate_susceptible, death_rate_infected):
-        """ Simple death event that differentiates between infected and
+    def infect_method_two(self):
+        indices = self.get_indices(State.SUSCEPTIBLE,
+                                   self.parameters.encounters)
+        random.shuffle(self.agents)
+        for i in range(len(indices)):
+            if self.agents[i].state == State.INFECTIOUS:
+                self.agents[indices[i]].state = State.INFECTIOUS
+                self.total_infections += 1
+
+    def recover(self):
+        """ Simulation event that moves agents from infectious to recovered
+        state.
+        """
+        for agent in self.agents:
+            if agent.state == State.INFECTIOUS:
+                if random.random() < self.parameters.recovery_prob:
+                    agent.state = State.RECOVERED
+
+    def vaccinate(self):
+        """ Simulation event that moves agents from susceptible to vaccinated
+        state.
+        """
+        for agent in self.agents:
+            if agent.state == State.SUSCEPTIBLE:
+                if random.random() < self.parameters.vaccination_prob:
+                    agent.state = State.VACCINATED
+
+    def susceptible(self):
+        """ Simulation event that moves vaccinated and susceptible agents back
+        the susceptible state.
+        """
+        for agent in self.agents:
+            if (agent.state == State.VACCINATED) or \
+               (agent.state == State.RECOVERED):
+                if random.random() < self.parameters.regression_prob:
+                    agent.state = State.SUSCEPTIBLE
+
+    def die(self):
+        """ Simple death event that differentiates between infectious and
         susceptible agents.
         """
         for agent in self.agents:
             if agent.state == State.SUSCEPTIBLE:
-                if random.random() < death_rate_susceptible:
+                if random.random() < self.parameters.death_prob_susceptible:
                     agent.state = State.DEAD
-            elif agent.state == State.INFECTED:
-                if random.random() < death_rate_infected:
+            elif agent.state == State.INFECTIOUS:
+                if random.random() < self.parameters.death_prob_infectious:
                     agent.state = State.DEAD
+                    self.infection_deaths += 1
+
+    def print_agents(self):
+        """ Simulation event that outputs the agents to a file.
+        """
+        self.agents.sort(key=lambda agent: agent.identity)
+        with open(self.parameters.agent_filename, 'w') as f:
+            print("id,state", file=f)
+            for agent in self.agents:
+                print(f"{agent.identity},{agent.state}", file=f)
+
+    def report_header(self):
+        """ Creates the csv header for the report event.
+        """
+        print("#,iter,S,I,R,V,D,TI,TID")
 
     def report(self, iteration):
         """ Prints out the vital statistics.
         """
-        num_susceptible = len([agent for agent in self.agents if agent.state == State.SUSCEPTIBLE])
-        num_infections = len([agent for agent in self.agents if agent.state == State.INFECTED])
-        num_deaths = len([agent for agent in self.agents if agent.state == State.DEAD])
-        s = f"Simulation: {self.identity}. " \
-            f"Iteration: {iteration}. " \
-            f"Susceptible: {num_susceptible}. " \
-            f"Infections: {num_infections}. " \
-            f"Deaths: {num_deaths}."
-        print(s)
+        susceptible = len([agent for agent in self.agents
+                           if agent.state == State.SUSCEPTIBLE])
+        infectious = len([agent for agent in self.agents
+                          if agent.state == State.INFECTIOUS])
+        recovered = len([agent for agent in self.agents
+                         if agent.state == State.RECOVERED])
+        vaccinated = len([agent for agent in self.agents
+                          if agent.state == State.VACCINATED])
+        dead = len([agent for agent in self.agents
+                    if agent.state == State.DEAD])
 
-    def simulate(self, iterations, growth_per_day, events, death_rate_susceptible, death_rate_infected):
-        """ Simulation engine that repeatedly executes all the events for
+        s = f"{self.identity}.{iteration}," \
+            f"{susceptible},{infectious},{recovered},{vaccinated},{dead}," \
+            f"{self.total_infections},{self.infection_deaths}"
+        print(s)
+        if self.parameters.output_agents > 0:
+            if (iteration > 0) and \
+               (iteration % self.parameters.output_agents == 0):
+                self.print_agents()
+
+    def simulate(self):
+        """ Simulation engine that repeatedly executes all the encounters for
         specified number of iterations.
         """
-        for i in range(iterations):
-            self.grow(growth_per_day)
-            self.infect(events)
-            self.die(death_rate_susceptible, death_rate_infected)
-            if i % 100 == 0:
+        if self.identity == 0:
+            self.report_header()
+        for i in range(self.parameters.iterations):
+            self.grow()
+            if self.parameters.infection_method == InfectionMethod.BOTH:
+                if self.identity % 2 == 0:
+                    self.infect_method_one()
+                else:
+                    self.infect_method_two()
+            elif self.parameters.infection_method == InfectionMethod.ONE:
+                self.infect_method_one()
+            else:
+                self.infect_method_two()
+            self.recover()
+            self.vaccinate()
+            self.susceptible()
+            self.die()
+            if i != 0 and i % 100 == 0:
                 self.report(i)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        prog='abm',
-        description='Simple agent based model')
-
-    parser.add_argument('--simulations', type=int, default=10,
-                        help='number of simulations')
-    parser.add_argument('--iterations', type=int, default=365*4,
-                        help='number of iterations')
-    parser.add_argument('--infections', type=int, default=10,
-                        help='initial infections')
-    parser.add_argument('--agents', type=int, default=10000,
-                        help='number of agents')
-    parser.add_argument('--events', type=int, default=20,
-                        help='number of potential infections per iteration to simulate')
-    parser.add_argument('--growth', type=float, default=0.0001,
-                        help='population growth per iteration')
-    parser.add_argument('--death_rate_susceptible', type=float, default=0.0001,
-                        help='death rate for susceptible agents per iteration')
-    parser.add_argument('--death_rate_infected', type=float, default=0.001,
-                        help='death rate for infected agents per iteration')
-    args = parser.parse_args()
-
-    def run_simulation(num):
-        """ Runs a single simulation. Invoked from the multiprocessing pool.
-        """
-        simulation = Simulation(num, args.agents, args.infections)
-        simulation.simulate(args.iterations, args.growth, args.events,
-                            args.death_rate_susceptible,
-                            args.death_rate_infected)
-        simulation.report(args.iterations)
-
-    with Pool() as p:
-        p.map(run_simulation, range(args.simulations))
+        self.report(self.parameters.iterations)

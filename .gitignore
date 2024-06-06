@@ -13,5 +13,7 @@ main
 main.o
 zig/zig-cache/
 zig/zig-out/
-
-
+gmon.out
+python/__pycache__/
+flamegraph.svg
+perf.data

@@ -15,7 +15,6 @@
 //! This package implements a simple agent-based model simulation engine
 //! for the purpose of comparing programming environments.
 
-const clap = @import("./zig-clap/clap.zig");
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const expect = std.testing.expect;
@@ -24,6 +23,7 @@ const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
 pub const RndGen = std.rand.DefaultPrng;
 pub threadlocal var rnd: RndGen = undefined;
+const assert = std.debug.assert;
 
 /// Represents the possible states an agent can be in.
 const State = enum {
@@ -195,13 +195,15 @@ pub const Simulation = struct {
     /// where each entry corresponds to an agent with the given state.
     /// Stops if max number of entries reached.
     fn get_indices(self: *Simulation, state: State, max: usize) !ArrayList(usize) {
+        assert(max < self.agents.items.len);
         var indices = ArrayList(usize).init(self.*.allocator);
+        _ = try indices.ensureTotalCapacityPrecise(max);
+        var c: usize = 0;
         for (0..self.agents.items.len) |i| {
-            if (i >= max) {
-                break;
-            }
+            if (i >= max) break;
             if (self.agents.items[i].state == state) {
                 try indices.append(i);
+                c += 1;
             }
         }
         return indices;
@@ -209,13 +211,13 @@ pub const Simulation = struct {
 
     /// Simulation event that infects agents (2nd of 2 methods implemented)
     pub fn infect_method_two(self: *Simulation) !void {
-        const indices_susceptible =
+        const indices =
             try self.get_indices(State.SUSCEPTIBLE, @intCast(self.parameters.encounters));
-        defer indices_susceptible.deinit();
+        defer indices.deinit();
         std.Random.shuffle(rnd.random(), Agent, self.*.agents.items);
-        for (0..indices_susceptible.items.len) |i| {
+        for (0..indices.items.len) |i| {
             if (self.agents.items[i].state == State.INFECTIOUS) {
-                self.*.agents.items[indices_susceptible.items[i]].state =
+                self.*.agents.items[indices.items[i]].state =
                     State.INFECTIOUS;
                 self.total_infections += 1;
             }
@@ -320,7 +322,9 @@ pub const Simulation = struct {
         const stdout = std.io.getStdOut().writer();
         try stdout.print("{s}", .{str});
         if (self.parameters.output_agents > 0) {
-            if (iteration % self.parameters.output_agents == 0) {
+            if (iteration > 0 and
+                iteration % self.parameters.output_agents == 0)
+            {
                 try self.print_agents();
             }
         }
@@ -341,9 +345,12 @@ pub const Simulation = struct {
         const out = file.writer();
 
         std.mem.sort(Agent, self.*.agents.items, {}, Simulation.cmp_agent);
-        try out.print("id,state", .{});
+        try out.print("id,state\n", .{});
         for (0..self.agents.items.len) |i| {
-            try out.print("{},{}", .{ self.agents.items[i].identity, self.agents.items[i].state });
+            try out.print("{},{}\n", .{
+                self.agents.items[i].identity,
+                self.agents.items[i].state,
+            });
         }
     }
 
@@ -352,6 +359,7 @@ pub const Simulation = struct {
         if (self.identity == 0) {
             try report_header();
         }
+        try self.report(0);
         for (0..self.parameters.iterations) |i| {
             try self.grow();
             if (self.parameters.infection_method == 1) {
@@ -370,7 +378,7 @@ pub const Simulation = struct {
             self.vaccinate();
             self.susceptible();
             self.die();
-            if (i % 100 == 0) {
+            if (i != 0 and i % 100 == 0) {
                 try self.report(i);
             }
         }

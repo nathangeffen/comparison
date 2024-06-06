@@ -22,31 +22,31 @@ use threadpool::ThreadPool;
 
 /// This struct handles the command line arguments.
 #[derive(Parser, Debug, Clone)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, rename_all = "snake_case")]
 struct Parameters {
     /// Number of simulations
     #[arg(short, long, default_value_t = 20)]
-    pub simulations: i32,
+    pub simulations: usize,
 
     /// Id number of simulation (if running only one)
     #[arg(long, default_value_t = 0)]
-    pub identity: i32,
-
-    /// Number of initial agents
-    #[arg(short, long, default_value_t = 10000)]
-    pub agents: i32,
+    pub identity: usize,
 
     /// Number of iterations in a simulation
     #[arg(short, long, default_value_t = 365 * 4)]
     pub iterations: i32,
 
+    /// Number of initial agents
+    #[arg(short, long, default_value_t = 10_000)]
+    pub agents: usize,
+
     /// Number of initial agents who are infectious
     #[arg(long, default_value_t = 10)]
-    pub infections: i32,
+    pub infections: usize,
 
     /// Number of encounters between agents in the infection methods
     #[arg(short, long, default_value_t = 100)]
-    pub encounters: i32,
+    pub encounters: usize,
 
     /// Growth rate of the agent population per iteration
     #[arg(short, long, default_value_t = 0.0001)]
@@ -54,24 +54,23 @@ struct Parameters {
 
     /// Death rate of the susceptible agent population per iteration
     #[arg(long, default_value_t = 0.0001)]
-    pub death_risk_susceptible: f64,
+    pub death_prob_susceptible: f64,
 
     /// Death rate of the infectious agent population per iteration
     #[arg(long, default_value_t = 0.001)]
-    pub death_risk_infectious: f64,
+    pub death_prob_infectious: f64,
 
-    /// Risk of infectious agent moving to recovery state per iteration
+    /// Prob of infectious agent moving to recovery state per iteration
     #[arg(short, long, default_value_t = 0.01)]
-    pub recovery_risk: f64,
+    pub recovery_prob: f64,
 
-    /// Risk of susceptible agent moving to vaccinated state per iteration
+    /// Prob of susceptible agent moving to vaccinated state per iteration
     #[arg(short, long, default_value_t = 0.001)]
-    pub vaccination_risk: f64,
+    pub vaccination_prob: f64,
 
-    /// Risk of recovered or vaccinated agent becoming susceptible per iteration
+    /// Prob of recovered or vaccinated agent becoming susceptible per iteration
     #[arg(long, default_value_t = 0.0003)]
-    pub regression_risk: f64,
-
+    pub regression_prob: f64,
 
     /// Infection method to use (0 = BOTH, 1 = ONE, 2 = TWO)
     #[arg(long, default_value_t = 0)]
@@ -95,11 +94,11 @@ fn one_simulation(parameters: Parameters) {
         infections: parameters.infections,
         encounters: parameters.encounters,
         growth: parameters.growth,
-        death_risk_susceptible: parameters.death_risk_susceptible,
-        death_risk_infectious: parameters.death_risk_infectious,
-        recovery_risk: parameters.recovery_risk,
-        vaccination_risk: parameters.vaccination_risk,
-        regression_risk: parameters.regression_risk,
+        death_prob_susceptible: parameters.death_prob_susceptible,
+        death_prob_infectious: parameters.death_prob_infectious,
+        recovery_prob: parameters.recovery_prob,
+        vaccination_prob: parameters.vaccination_prob,
+        regression_prob: parameters.regression_prob,
 	infection_method: match parameters.infection_method {
 	    1 => abm::InfectionMethod::ONE,
 	    2 => abm::InfectionMethod::TWO,
@@ -108,7 +107,7 @@ fn one_simulation(parameters: Parameters) {
         output_agents: parameters.output_agents,
         agent_filename: parameters.agent_filename.clone()
     };
-    let mut s = abm::Simulation::new(parameters.identity, abm_parameters);
+    let mut s = abm::Simulation::new(parameters.identity, &abm_parameters);
     s.simulate();
 }
 
@@ -116,7 +115,7 @@ fn one_simulation(parameters: Parameters) {
 /// simulations.
  fn main() {
     let parameters =  Parameters::parse();
-    if parameters.simulations == 0 {
+    if parameters.simulations <= 1 {
          one_simulation(parameters);
     } else {
         let threads = num_cpus::get();

@@ -1,278 +1,365 @@
-/**
- * Simple agent-based simulation of an infectious disease.
- */
+// Copyright 2024 Nathan Geffen
 
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! This program implements a simple agent based model for the purpose of
+//! comparing programming languages.
 
 #include <algorithm>
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <random>
 #include <vector>
 
 #include <boost/asio.hpp>
 
-#include <getopt.h>
+#include "CLI11.hpp"
 
 std::random_device rd;
 thread_local std::default_random_engine rng(rd());
 
-/**
- * For processing command line arguments
- */
-static struct option long_options[] = {
-  {"simulations", required_argument, 0, 0},
-  {"iterations", required_argument, 0, 0},
-  {"infections", required_argument, 0, 0},
-  {"agents", required_argument, 0,  0 },
-  {"growth", required_argument, 0, 0},
-  {"events", required_argument, 0,  0},
-  {"death_rate_susceptible", required_argument, 0,  0},
-  {"death_rate_infected", required_argument, 0,  0},
-  {0,         0,                 0,  0 }
-};
 
 /**
  *   Possible agent states
  */
 enum State {
   SUSCEPTIBLE = 0,
-  INFECTED,
+  INFECTIOUS,
+  RECOVERED,
+  VACCINATED,
   DEAD
 };
 
+/// Displays the first letter of a state in upper case
+std::ostream& operator<<(std::ostream& stream,
+			 const State& state) {
+  switch(state) { // Assuming you define print for matrix
+  case State::SUSCEPTIBLE: stream << 'S'; break;
+  case State::INFECTIOUS: stream << 'I'; break;
+  case State::RECOVERED: stream << 'R'; break;
+  case State::VACCINATED: stream << 'V'; break;
+  case State::DEAD: stream << 'D'; break;
+  }
+  return stream;
+}
+
+/// Determines which infection event to call in the simulation
+enum InfectionMethod {
+  BOTH = 0,
+  ONE = 1,
+  TWO = 2
+};
+
 /**
- * Holds an agent who has two attributes, a unique identity and a state.
+ * Structure to hold simulation's parameters.
  */
+struct Parameters {
+  int simulations = 20;
+  int iterations = 365 * 4;
+  size_t agents = 10000;
+  size_t infections = 10;
+  size_t encounters = 100;
+  double growth = 0.0001;
+  double death_prob_susceptible = 0.0001;
+  double death_prob_infectious = 0.001;
+  double recovery_prob = 0.01;
+  double vaccination_prob = 0.001;
+  double regression_prob = 0.0003;
+  InfectionMethod infection_method = InfectionMethod::BOTH;
+  int output_agents = 0;
+  std::string agent_filename = "agents.csv";
+};
+
+/// Holds an agent who has two attributes, a unique identity and a state.
 struct Agent {
   Agent(int identity_, State state_) : identity(identity_), state(state_) {};
   int identity;
   State state;
 };
 
-/**
- * Prints help screen if -h command line options specified.
- */
-void print_help(const char *prog) {
-  struct option *it = long_options;
+/// This is used to represent a snapshot of stats for a simulation.
+struct Statistics {
+  size_t susceptible;
+  size_t infectious;
+  size_t recovered;
+  size_t vaccinated;
+  size_t dead;
 
-  std::cerr << prog << " [options]\n";
-  while(it->name != 0) {
-    std::cerr << it->name << " <value> \n";
-    ++it;
+  Statistics(const std::vector<Agent> &agents) {
+    susceptible = std::count_if(agents.begin(), agents.end(),
+				[](const Agent &a) {
+				  return a.state == State::SUSCEPTIBLE;
+				});
+    infectious = std::count_if(agents.begin(), agents.end(),
+			       [](const Agent &a) {
+				 return a.state == State::INFECTIOUS;
+			       });
+    recovered = std::count_if(agents.begin(), agents.end(),
+			      [](const Agent &a) {
+				return a.state == State::RECOVERED;
+			      });
+    vaccinated = std::count_if(agents.begin(), agents.end(),
+			       [](const Agent &a) {
+				 return a.state == State::VACCINATED;
+			       });
+    dead = std::count_if(agents.begin(), agents.end(),
+			 [](const Agent &a) {
+			   return a.state == State::DEAD;
+			 });
   }
-}
+};
 
-/**
- * Simple simulation engine with a few events.
- */
+/// This is the data structure for the simulation engine.
 struct Simulation {
+  int identity; // Unique id of this simulation
+  std::vector<Agent> agents; // Holds the simulation's agents
+  Parameters parameters;
+  size_t total_infections;
+  size_t infection_deaths = 0;
 
   /** Initializes the simulation with a unique identity, initial number of
    *  agents and initial number of infections.
    */
-  Simulation(int identity_, int num_agents, int num_infections) {
-    identity = identity_;
-    for (int i = 0; i < num_agents; i++) {
+  Simulation(int identity, const Parameters& parameters) :
+    identity (identity), parameters(parameters) {
+    for (size_t i = 0; i < parameters.agents; i++) {
       Agent agent(i, State::SUSCEPTIBLE);
       agents.push_back(agent);
     }
-    for (int i = 0; i < num_infections; i++) {
-      agents[i].state = State::INFECTED;
-    }
     std::shuffle(agents.begin(), agents.end(), rng);
-  }
-
-  /**
-   * Event to grow the number of agents.
-   */
-  void grow(double growth_per_day) {
-    int num_agents = std::count_if(agents.begin(), agents.end(),
-				   [](const Agent &a) {
-				     return a.state != State::DEAD;
-				   });
-    int new_agents = round(growth_per_day * num_agents);
-    int id = agents.size();
-    for (int i = 0; i < new_agents; i++) {
-      Agent agent(id, State::SUSCEPTIBLE);
-      agents.push_back(agent);
-      ++id;
+    for (size_t i = 0; i < parameters.infections; i++) {
+      agents[i].state = State::INFECTIOUS;
     }
+    total_infections = parameters.infections;
   }
 
-  /**
-   * Intentionally time-consuming event to infect agents.  Agents
-   * randomly encounter one another. If an infected agent
-   * encounters a susceptible one, an infection takes place.
-   */
-  void infect(int events) {
+
+  /// Event to grow the number of agents.
+  void grow() {
+    size_t num_agents = std::count_if(agents.begin(), agents.end(),
+				      [](const Agent &a) {
+					return a.state != State::DEAD;
+				      });
+    size_t new_agents = round(parameters.growth * num_agents);
+    size_t size = agents.size();
+    for (size_t i = size; i < size + new_agents; i++)
+      agents.push_back(Agent(i, State::SUSCEPTIBLE));
+  }
+
+  /// Intentionally time-consuming event to infect agents.  Agents
+  /// randomly encounter one another. If an infectious agent
+  /// encounters a susceptible one, an infection takes place.
+  void infect_method_one() {
     std::uniform_int_distribution<> dist(0, agents.size() - 1);
-    for (int i = 0; i < events; i++) {
+    for (size_t i = 0; i < parameters.encounters; i++) {
       int ind1 = dist(rng);
       int ind2 = dist(rng);
       if (agents[ind1].state == State::SUSCEPTIBLE &&
-	  agents[ind2].state == State::INFECTED) {
-	agents[ind1].state = State::INFECTED;
-      } else if (agents[ind1].state == State::INFECTED &&
+	  agents[ind2].state == State::INFECTIOUS) {
+	agents[ind1].state = State::INFECTIOUS;
+	++total_infections;
+      } else if (agents[ind1].state == State::INFECTIOUS &&
 		 agents[ind2].state == State::SUSCEPTIBLE) {
-	agents[ind2].state = State::INFECTED;
+	agents[ind2].state = State::INFECTIOUS;
+	++total_infections;
       }
     }
   }
 
-  /**
-   * Simple death event that differentiates between infected and susceptible
-   * agents.
-   */
-  void die(double death_rate_susceptible, double death_rate_infected) {
+  /// Returns a vector of indices into an agents vector
+  /// where each entry corresponds to an agent with the given state.
+  /// Stops if max number of entries reached.
+  std::vector<size_t> get_indices(State state, size_t max) {
+    std::vector<size_t> indices;
+    for (size_t i = 0; i < agents.size(); i++) {
+      if (i >= max) break;
+      if (agents[i].state == state)
+	indices.push_back(i);
+    }
+    return indices;
+  }
+
+  /// Simulation event that infects agents (2nd of 2 methods implemented)
+  void infect_method_two() {
+    std::vector<size_t> indices = get_indices(State::SUSCEPTIBLE,
+					      parameters.encounters);
+    std::shuffle(agents.begin(), agents.end(), rng);
+    for (size_t i = 0; i < indices.size(); i++) {
+      if (agents[i].state == State::INFECTIOUS) {
+	agents[indices[i]].state = State::INFECTIOUS;
+	++total_infections;
+      }
+    }
+  }
+
+  /// Simulation event that moves agents from infectious to recovered state
+  void recover() {
+    std::uniform_real_distribution<> dist(0.0, 1.0);
+    for (auto &agent: agents) {
+      if (agent.state == State::INFECTIOUS) {
+	if (dist(rng) < parameters.recovery_prob)
+	  agent.state = State::RECOVERED;
+      }
+    }
+  }
+
+  /// Simulation event that moves agents from susceptible to vaccinated state
+  void vaccinate() {
+    std::uniform_real_distribution<> dist(0.0, 1.0);
+    for (auto &agent: agents) {
+      if (agent.state == State::SUSCEPTIBLE) {
+	if (dist(rng) < parameters.vaccination_prob)
+	  agent.state = State::VACCINATED;
+      }
+    }
+  }
+
+  /// Simulation event that moves vaccinated and susceptible agents back to
+  /// the susceptible state
+  void susceptible() {
+    std::uniform_real_distribution<> dist(0.0, 1.0);
+    for (auto &agent: agents) {
+      if (agent.state == State::VACCINATED ||
+	  agent.state == State::RECOVERED) {
+	if (dist(rng) < parameters.regression_prob)
+	  agent.state = State::SUSCEPTIBLE;
+      }
+    }
+  }
+
+  /// Simple death event that differentiates between infectious and susceptible
+  /// agents.
+  void die() {
     std::uniform_real_distribution<> dist(0.0, 1.0);
     for (auto & agent: agents) {
       if (agent.state == State::SUSCEPTIBLE) {
-	if (dist(rng) < death_rate_susceptible) {
+	if (dist(rng) < parameters.death_prob_susceptible) {
 	  agent.state = State::DEAD;
 	}
-      } else if (agent.state == State::INFECTED) {
-	if (dist(rng) < death_rate_infected) {
+      } else if (agent.state == State::INFECTIOUS) {
+	if (dist(rng) < parameters.death_prob_infectious) {
 	  agent.state = State::DEAD;
+	  ++infection_deaths;
 	}
       }
     }
   }
 
-  /** Prints out the vital statistics.
-   */
+  /// Creates the csv header for the report event
+  void report_header() {
+    std::cout << "#,iter,S,I,R,V,D,TI,TID\n";
+  }
+
+  /// Outputs the agents to a file
+  void print_agents() {
+    sort(agents.begin(), agents.end(), [](const Agent &a, const Agent &b) {
+      return a.identity < b.identity;
+    });
+    std::ofstream file(parameters.agent_filename);
+
+    file << "id,state\n";
+    for (auto &agent: agents)
+      file << agent.identity << "," << agent.state << "\n";
+    file.close();
+  }
+
+  /// Prints out the vital statistics.
   void report(int iteration) {
-    int num_susceptible = std::count_if(agents.begin(), agents.end(),
-					[](const Agent &a) {
-					  return a.state == State::SUSCEPTIBLE;
-					});
-    int num_infections = std::count_if(agents.begin(), agents.end(),
-				       [](const Agent &a) {
-					 return a.state == State::INFECTED;
-				       });
-    int num_deaths = std::count_if(agents.begin(), agents.end(),
-				   [](const Agent &a) {
-				     return a.state == State::DEAD;
-				   });
+    Statistics stats = Statistics(agents);
     // We want to send one string to cout to prevent data races on stdout
     std::stringstream ss;
-    ss << "Simulation: " << identity << ". "
-       << "Iteration: " << iteration << ". "
-       << "Susceptible: " << num_susceptible << ". "
-       << "Infections: " << num_infections << ". "
-       << "Deaths: " << num_deaths << "." << "\n";
+    ss << identity << "," << iteration << ","
+       << stats.susceptible << "," << stats.infectious << ","
+       << stats.recovered << "," << stats.vaccinated << ","
+       << stats.dead << "," << total_infections << ","
+       << infection_deaths << "\n";
     std::cout << ss.str();
+    if (parameters.output_agents > 0) {
+      if (iteration > 0 && iteration % parameters.output_agents == 0) {
+	print_agents();
+      }
+    }
   }
 
   /** Simulation engine that repeatedly executes all the events
    *  for specified number of iterations.
    */
-  void simulate(int iterations, double growth_per_day, int events,
-		double death_rate_susceptible, double death_rate_infected) {
-    for (int i = 0; i < iterations; i++) {
-      grow(growth_per_day);
-      infect(events);
-      die(death_rate_susceptible, death_rate_infected);
-      if (i % 100 == 0) {
+  void simulate() {
+    if (identity == 0)
+      report_header();
+    report(0);
+    for (int i = 0; i < parameters.iterations; i++) {
+      grow();
+      switch(parameters.infection_method) {
+      case BOTH:
+	if (identity % 2 == 0)
+	  infect_method_one();
+	else
+	  infect_method_two();
+	break;
+      case ONE: infect_method_one(); break;
+      case TWO: infect_method_two(); break;
+      }
+      recover();
+      vaccinate();
+      susceptible();
+      die();
+      if (i != 0 && i % 100 == 0) {
 	report(i);
       }
     }
+    report(parameters.iterations);
   }
-
-  int identity; // Unique id of this simulation
-  std::vector<Agent> agents; // Holds the simulation's agents
 };
 
-
-/**
- * Structure to hold simulation's parameters.
- */
-struct Parameters {
-  int simulations = 10;
-  int sim_num = 0;
-  int iterations = 365*4;
-  int infections = 10;
-  int agents = 10000;
-  int events = 20;
-  double growth = 0.0001;
-  double death_rate_susceptible = 0.0001;
-  double death_rate_infected = 0.001;
-};
-
-/**
- * Process command line arguments and return parameters.
- */
-Parameters process_arguments(int argc, char **argv) {
-  Parameters result;
-  while (1) {
-    int option_index = 0;
-
-    int c = getopt_long(argc, argv, "h", long_options, &option_index);
-
-    if (c == -1)
-      break;
-
-    if (c == 0) {
-      const char *s = long_options[option_index].name;
-      if (strcmp(s, "simulations") == 0) {
-	result.simulations = std::stoi(optarg);
-      } else if (strcmp(s, "iterations") == 0) {
-	result.iterations = std::stoi(optarg);
-      } else if (strcmp(s, "infections") == 0) {
-	result.infections = std::stoi(optarg);
-      } else if (strcmp(s, "agents") == 0) {
-	result.agents = std::stoi(optarg);
-      } else if (strcmp(s, "events") == 0) {
-	result.events = std::stoi(optarg);
-      } else if (strcmp(s, "growth") == 0) {
-	result.growth = std::stod(optarg);
-      } else if (strcmp(s, "death_rate_susceptible") == 0) {
-	result.death_rate_susceptible = std::stod(optarg);
-      } else if (strcmp(s, "death_rate_infected") == 0) {
-	result.death_rate_infected = std::stod(optarg);
-      } else {
-	std::cerr << "Unknown options: " << s << "\n";
-      }
-    }
-    if (c == 'h') {
-      print_help(argv[0]);
-    }
-  }
-
-  if (optind < argc) {
-    printf("non-option ARGV-elements: ");
-    while (optind < argc)
-      printf("%s ", argv[optind++]);
-    printf("\n");
-  }
-  return result;
-}
-
-/**
- * Runs one simulation. Used by Boost pool.
- */
-void run_one_simulation(const Parameters& p) {
-  Simulation simulation(p.sim_num, p.agents, p.infections);
-  simulation.simulate(p.iterations, p.growth, p.events,
-		      p.death_rate_susceptible, p.death_rate_infected);
-  simulation.report(p.iterations);
-}
-
-/**
- * Gets command line arguments and then runs the simulations in a
- * parallel pool.
- */
+/// Gets command line arguments and then runs the simulations in a
+/// parallel pool.
 int main(int argc, char **argv) {
-  Parameters original = process_arguments(argc, argv);
-  std::vector<Parameters> parameters(original.simulations);
-  boost::asio::thread_pool pool(std::thread::hardware_concurrency());
-  for (int i = 0; i < original.simulations; i++) {
-    parameters[i] = original;
-    parameters[i].sim_num = i;
-    boost::asio::post(pool, [&parameters, i]() {
-      run_one_simulation(parameters[i]);
-    });
-  }
-  pool.join();
+  Parameters parameters;
+  int identity = 0;
+  CLI::App app{"Agent based model in C++"};
+  argv = app.ensure_utf8(argv);
 
+  app.add_option("-s,--simulations", parameters.simulations,
+		 "Number of simulations");
+  app.add_option("--identity", identity,
+		 "Id number of simulation (if running only one)");
+  app.add_option("-i,--iterations", parameters.iterations,
+		 "Number of iterations in a simulation");
+  app.add_option("-a,--agents", parameters.agents,
+		 "Number of initial agents");
+  app.add_option("--infections", parameters.infections,
+		 "Number of initial agents who are infectious");
+  app.add_option("-e,--encounters", parameters.encounters,
+		 "Number of encounters between agents in the infection methods");
+  app.add_option("--output_agents", parameters.output_agents,
+		 "Iteration frequency to write out agents (0 = never)");
+
+  CLI11_PARSE(app, argc, argv);
+
+  if (parameters.simulations <= 1) {
+	Simulation simulation(identity, parameters);
+	simulation.simulate();
+  } else {
+    boost::asio::thread_pool pool(std::thread::hardware_concurrency());
+    for (int i = 0; i < parameters.simulations; i++) {
+      boost::asio::post(pool, [i, &parameters]() {
+	Simulation simulation(i, parameters);
+	simulation.simulate();
+      });
+    }
+    pool.join();
+  }
   return 0;
 }

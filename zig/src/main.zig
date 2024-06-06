@@ -18,12 +18,7 @@
 const clap = @import("./zig-clap/clap.zig");
 const abm = @import("./abm.zig");
 const std = @import("std");
-const ArrayList = std.ArrayList;
-const expect = std.testing.expect;
-const eql = std.mem.eql;
-const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
-//const RndGen = std.rand.DefaultPrng;
 
 /// Runs one simulation. Called within the thread pool so has to be thread
 /// safe. May not return an error apparently.
@@ -57,6 +52,7 @@ fn process_command_line() !abm.Parameters {
         \\-s, --simulations <usize>   Number of simulations.
         \\    --identity    <usize>   Id number of simulation
         \\-a, --agents      <usize>   Number of initial agents
+        \\--infections <usize> Number of initial infections
         \\-i, --iterations <usize> Number of iterations per simulation
         \\-e, --encounters <usize> Number of encounters for infections
         \\-g, --growth     <f64>   Growth rate of agents per iteration
@@ -85,12 +81,14 @@ fn process_command_line() !abm.Parameters {
         try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     if (res.args.simulations) |s|
         parameters.simulations = s;
+    if (res.args.iterations) |i|
+        parameters.iterations = i;
     if (res.args.identity) |i|
         parameters.identity = i;
     if (res.args.agents) |a|
         parameters.agents = a;
-    if (res.args.iterations) |i|
-        parameters.iterations = i;
+    if (res.args.infections) |i|
+        parameters.infections = i;
     if (res.args.encounters) |e|
         parameters.encounters = e;
     if (res.args.growth) |g|
