@@ -52,11 +52,11 @@ struct Parameters {
     #[arg(short, long, default_value_t = 0.0001)]
     pub growth: f64,
 
-    /// Death rate of the susceptible agent population per iteration
+    /// Death prob of a susceptible agent population per iteration
     #[arg(long, default_value_t = 0.0001)]
     pub death_prob_susceptible: f64,
 
-    /// Death rate of the infectious agent population per iteration
+    /// Death prob of an infectious agent population per iteration
     #[arg(long, default_value_t = 0.001)]
     pub death_prob_infectious: f64,
 
