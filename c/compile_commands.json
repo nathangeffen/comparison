@@ -1,0 +1,7 @@
+[
+  {
+    "directory": "/home/nathan/workspace/comparison/c",
+    "file": "abm.c",
+    "command": "clang -Wall -pedantic -o abm abm.c -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -pthread -lgsl -lgslcblas -lm -lglib-2.0"
+  }
+]

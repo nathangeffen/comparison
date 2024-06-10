@@ -17,3 +17,4 @@ gmon.out
 python/__pycache__/
 flamegraph.svg
 perf.data
+tests
