@@ -2,190 +2,157 @@
  * Simple agent-based simulation of an infectious disease.
  */
 
+#include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
-
-#include <getopt.h>
-#include <unistd.h>
-
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_randist.h>
-#include <gsl/gsl_rng.h>
 
 #include <glib.h>
 
-_Thread_local gsl_rng *rng;
+#include "abm.h"
 
-void rng_alloc(int seed) {
-        int s = seed * (gsl_rng_default_seed + 1);
-        const gsl_rng_type *T;
-        T = gsl_rng_default;
-        rng = gsl_rng_alloc(T);
-        gsl_rng_set(rng, s);
+void rng_init(rng_t *rng, uint64_t seed)
+{
+		rng->seed = seed;
+}
+
+const uint64_t a = 22695477;
+const uint64_t c = 1;
+const uint64_t m = 32768;
+
+uint64_t rng_uint64_t(rng_t *rng)
+{
+
+    rng->seed = rng->seed * 1103515245 + 12345;
+    return (rng->seed/65536) % m;
+}
+
+uint64_t rng_to(rng_t *rng, uint64_t max)
+{
+		assert(max > 0);
+		uint64_t result = rng_uint64_t(rng) % max;
+		return result;
+}
+
+
+double rng_double(rng_t *rng)
+{
+		double result = (double) rng_uint64_t(rng) / m;
+		return result;
 }
 
 /**
  *   Possible agent states
  */
-enum state {
-        SUSCEPTIBLE = 0,
-        INFECTIOUS,
-        RECOVERED,
-        VACCINATED,
-        DEAD,
-};
-
-typedef enum state state_t;
-
 char state_char(state_t state) {
-        switch (state) {
-                case SUSCEPTIBLE:
-                        return 'S';
-                case INFECTIOUS:
-                        return 'I';
-                case RECOVERED:
-                        return 'R';
-                case VACCINATED:
-                        return 'V';
-                case DEAD:
-                        return 'D';
-        }
+		switch (state) {
+				case SUSCEPTIBLE:
+						return 'S';
+				case INFECTIOUS:
+						return 'I';
+				case RECOVERED:
+						return 'R';
+				case VACCINATED:
+						return 'V';
+				case DEAD:
+						return 'D';
+				default:
+						return '_';
+		}
 }
-
-/// Determines which infection event to call in the simulation
-enum infection_method {
-        BOTH = 0,
-        ONE = 1,
-        TWO = 2,
-};
-
-typedef enum infection_method infection_method_t;
-
-/// Structure to hold simulation's parameters.
-struct parameters {
-        int simulations;
-        int iterations;
-        size_t agents;
-        size_t infections;
-        size_t encounters;
-        double growth;
-        double death_prob_susceptible;
-        double death_prob_infectious;
-        double recovery_prob;
-        double vaccination_prob;
-        double regression_prob;
-        infection_method_t infection_method;
-        int output_agents;
-        char agent_filename[255];
-};
-
-typedef struct parameters parameters_t;
-
-/// Holds an agent who has two attributes, a unique identity and a state.
-struct agent {
-        int identity;
-        state_t state;
-};
-
-typedef struct agent agent_t;
 
 agent_t new_agent(int identity, state_t state) {
-        agent_t a;
-        a.identity = identity;
-        a.state = state;
-        return a;
+		agent_t a;
+		a.identity = identity;
+		a.state = state;
+		return a;
 }
 
-/// This is used to represent a snapshot of stats for a simulation.
-struct statistics {
-        size_t susceptible;
-        size_t infectious;
-        size_t recovered;
-        size_t vaccinated;
-        size_t dead;
-};
-
-typedef struct statistics statistics_t;
-
-size_t count_if_state(const agent_t *agents, size_t n, state_t state)
+void shuffle(agent_t *agents, size_t n, rng_t *rng)
 {
-        size_t total = 0;
-        for (const agent_t *a = agents; a < agents + n; a++)
-                if (a->state == state)
-                        ++total;
-        return total;
+		for (size_t i = n - 1; i > 0; --i) {
+				size_t j = rng_to(rng, i + 1);
+				agent_t t = agents[j];
+				agents[j] = agents[i];
+				agents[i] = t;
+		}
 }
 
-size_t count_if_not_state(const agent_t *agents, size_t n, state_t state)
+size_t count_if_state(const agent_t * restrict agents, size_t n, state_t state)
 {
-        size_t total = count_if_state(agents, n, state);
-        return n - total;
+		size_t total = 0;
+		for (const agent_t *a = agents; a < agents + n; a++)
+				if (a->state == state)
+						++total;
+		return total;
 }
 
-statistics_t get_stats(const agent_t *agents, size_t n)
+size_t count_if_not_state(const agent_t * restrict agents, size_t n, state_t state)
 {
-        statistics_t results;
-        results.susceptible = count_if_state(agents, n, SUSCEPTIBLE);
-        results.infectious = count_if_state(agents, n, INFECTIOUS);
-        results.recovered = count_if_state(agents, n, RECOVERED);
-        results.vaccinated = count_if_state(agents, n, VACCINATED);
-        results.dead = count_if_state(agents, n, DEAD);
-        return results;
+		size_t total = count_if_state(agents, n, state);
+		return n - total;
 }
 
-/// Simple simulation engine with a few events.
-struct simulation {
-        int identity;    // Unique id of this simulation
-        agent_t *agents; // Array holding the simulation's agents
-        int size;
-        int capacity;
-};
-
-typedef struct simulation simulation_t;
+statistics_t get_stats(const agent_t * restrict agents, size_t n)
+{
+		statistics_t results;
+		results.susceptible = count_if_state(agents, n, SUSCEPTIBLE);
+		results.infectious = count_if_state(agents, n, INFECTIOUS);
+		results.recovered = count_if_state(agents, n, RECOVERED);
+		results.vaccinated = count_if_state(agents, n, VACCINATED);
+		results.dead = count_if_state(agents, n, DEAD);
+		return results;
+}
 
 /// Returns a new simulation
-simulation_t new_simulation(int identity, const parameters_t *parameters) {
-        simulation_t s;
-        s.identity = identity;
-        size_t n = parameters->agents * 3 / 2;
-        n = n < 10 ? 10 : n;
-        s.agents = malloc(n * sizeof(*s.agents));
-        if (s.agents == NULL) {
-                fprintf(stderr, "Error, can't allocate agents: %s %d\n",
-                                __FILE__, __LINE__);
-                exit(EXIT_FAILURE);
-        }
-        s.size = n_agents;
-        s.capacity = n;
-        for (int i = 0; i < s.size; i++)
-                s.agents[i] = new_agent(i, SUSCEPTIBLE);
-        for (int i = 0; i < n_infections; i++)
-                s.agents[i].state = INFECTIOUS;
-        gsl_ran_shuffle(rng, s.agents, s.size, sizeof(agent_t));
-        return s;
+simulation_t new_simulation(size_t identity, const parameters_t *parameters) {
+		simulation_t s;
+		s.parameters = *parameters;
+		s.identity = identity;
+		rng_init(&s.rng, identity);
+		size_t n = parameters->agents * 3 / 2;
+		n = n < 10 ? 10 : n;
+		s.agents = malloc(n * sizeof(*s.agents));
+		if (s.agents == NULL) {
+				fprintf(stderr, "Error, can't allocate agents: %s %d\n",
+								__FILE__, __LINE__);
+				exit(EXIT_FAILURE);
+		}
+		s.size = parameters->agents;
+		s.capacity = n;
+		for (size_t i = 0; i < s.size; i++)
+				s.agents[i] = new_agent(i, SUSCEPTIBLE);
+		shuffle(s.agents, s.size, &s.rng);
+		for (size_t i = 0; i < parameters->infectious; i++)
+				s.agents[i].state = INFECTIOUS;
+		s.total_infections = parameters->infectious;
+		s.infection_deaths = 0;
+		return s;
 }
 
 /// Event to grow the number of agents.
-void grow(simulation_t *simulation, double growth_per_day) {
-        int num_agents = count_if_not_state(simulation->agents,
-                        simulation->size, DEAD);
-        int new_agents = round(growth_per_day * num_agents);
-        if (simulation->size + new_agents > simulation->capacity) {
-                simulation->capacity *= 3 / 2;
-                agent_t *t = realloc(simulation->agents, simulation->capacity);
-                if (t == NULL) {
-                        fprintf(stderr, "Error, can't reallocate agents: %s %d\n", __FILE__, __LINE__);
-                        exit(EXIT_FAILURE);
-                } else {
-                        simulation->agents = t;
-                }
-        }
-        int id = simulation->size;
-        for (int i = 0; i < new_agents; i++, id++)
-                simulation->agents[id] = new_agent(id, SUSCEPTIBLE);
-        simulation->size += new_agents;
+void grow(simulation_t * restrict simulation)
+{
+		int num_agents = count_if_not_state(simulation->agents,
+						simulation->size, DEAD);
+		int new_agents = round(simulation->parameters.growth * num_agents);
+		if (simulation->size + new_agents > simulation->capacity) {
+				simulation->capacity *= 3 / 2;
+				agent_t *t = realloc(simulation->agents, simulation->capacity);
+				if (t == NULL) {
+						fprintf(stderr, "Error, can't reallocate agents: %s %d\n", __FILE__, __LINE__);
+						exit(EXIT_FAILURE);
+				} else {
+						simulation->agents = t;
+				}
+		}
+		int id = simulation->size;
+		for (int i = 0; i < new_agents; i++, id++)
+				simulation->agents[id] = new_agent(id, SUSCEPTIBLE);
+		simulation->size += new_agents;
 }
 
 /**
@@ -193,218 +160,206 @@ void grow(simulation_t *simulation, double growth_per_day) {
  * randomly encounter one another. If an infected agent
  * encounters a susceptible one, an infection takes place.
  */
-void infect(simulation_t *simulation, int events) {
-        for (int i = 0; i < events; i++) {
-                int ind1 = gsl_rng_uniform_int(rng, simulation->size);
-                int ind2 = gsl_rng_uniform_int(rng, simulation->size);
-                if (simulation->agents[ind1].state == SUSCEPTIBLE &&
-                                simulation->agents[ind2].state == INFECTIOUS) {
-                        simulation->agents[ind1].state = INFECTIOUS;
-                } else if (simulation->agents[ind1].state == INFECTIOUS &&
-                                simulation->agents[ind2].state == SUSCEPTIBLE) {
-                        simulation->agents[ind2].state = INFECTIOUS;
-                }
-        }
+void infect_method_one(simulation_t * restrict simulation)
+{
+		for (int i = 0; i < simulation->parameters.encounters; i++) {
+				int ind1 = rng_to(&simulation->rng, simulation->size);
+				int ind2 = rng_to(&simulation->rng, simulation->size);
+				if (simulation->agents[ind1].state == SUSCEPTIBLE &&
+								simulation->agents[ind2].state == INFECTIOUS) {
+						simulation->agents[ind1].state = INFECTIOUS;
+						++simulation->total_infections;
+				} else if (simulation->agents[ind1].state == INFECTIOUS &&
+								simulation->agents[ind2].state == SUSCEPTIBLE) {
+						simulation->agents[ind2].state = INFECTIOUS;
+						++simulation->total_infections;
+				}
+		}
 }
+
+void get_indices(const simulation_t * restrict simulation,
+				size_t ** restrict indices, size_t * restrict n, state_t state, size_t max)
+{
+		*n = 0;
+		*indices = malloc(sizeof(**indices) * max);
+		if (*indices == NULL) {
+				fprintf(stderr, "Error, can't allocate indices: %s %d\n",
+								__FILE__, __LINE__);
+				exit(EXIT_FAILURE);
+		}
+		for (size_t i = 0; i < simulation->size; i++) {
+				if (i >= max) break;
+				if (simulation->agents[i].state == state) {
+						(*indices)[*n] = i;
+						++(*n);
+				}
+		}
+}
+
+void infect_method_two(simulation_t * restrict simulation)
+{
+		size_t *indices;
+		size_t n;
+
+		get_indices(simulation, &indices, &n, SUSCEPTIBLE,
+						simulation->parameters.encounters);
+		shuffle(simulation->agents, simulation->size, &simulation->rng);
+
+		for (size_t i = 0; i < n; i++) {
+				if (simulation->agents[i].state == INFECTIOUS) {
+						simulation->agents[indices[i]].state = INFECTIOUS;
+						++simulation->total_infections;
+				}
+		}
+		free(indices);
+}
+
+void recover(simulation_t * restrict simulation)
+{
+		for (agent_t *agent = simulation->agents;
+						agent < simulation->agents + simulation->size;
+						agent++) {
+				if (agent->state == INFECTIOUS)
+						if (rng_double(&simulation->rng) < simulation->parameters.recovery_prob)
+								agent->state = RECOVERED;
+		}
+}
+
+void vaccinate(simulation_t * restrict simulation)
+{
+		for (agent_t *agent = simulation->agents;
+						agent < simulation->agents + simulation->size;
+						agent++) {
+				if (agent->state == SUSCEPTIBLE)
+						if (rng_double(&simulation->rng) < simulation->parameters.vaccination_prob)
+								agent->state = VACCINATED;
+		}
+}
+
+void susceptible(simulation_t * restrict simulation)
+{
+		for (agent_t *agent = simulation->agents;
+						agent < simulation->agents + simulation->size;
+						agent++) {
+				if (agent->state == VACCINATED || agent->state == RECOVERED)
+						if (rng_double(&simulation->rng) < simulation->parameters.regression_prob)
+								agent->state = SUSCEPTIBLE;
+		}
+}
+
 
 /// Simple death event that differentiates between infected and susceptible
 /// agents.
-void die(simulation_t *simulation, double death_rate_susceptible,
-                double death_rate_infected) {
-        for (agent_t *agent = simulation->agents;
-                        agent < simulation->agents + simulation->size; agent++) {
-                if (agent->state == SUSCEPTIBLE) {
-                        if (gsl_rng_uniform(rng) < death_rate_susceptible) {
-                                agent->state = DEAD;
-                        }
-                } else if (agent->state == INFECTIOUS) {
-                        if (gsl_rng_uniform(rng) < death_rate_infected) {
-                                agent->state = DEAD;
-                        }
-                }
-        }
+void die(simulation_t * restrict simulation)
+{
+		for (agent_t *agent = simulation->agents;
+						agent < simulation->agents + simulation->size; agent++) {
+				if (agent->state == SUSCEPTIBLE) {
+						if (rng_double(&simulation->rng) < simulation->parameters.death_prob_susceptible) {
+								agent->state = DEAD;
+						}
+				} else if (agent->state == INFECTIOUS) {
+						if (rng_double(&simulation->rng) < simulation->parameters.death_prob_infectious) {
+								agent->state = DEAD;
+								simulation->infection_deaths++;
+						}
+				}
+		}
+}
+
+static int cmp_agents(const void * restrict a, const void * restrict b)
+{
+		agent_t *x = (agent_t *) a;
+		agent_t *y = (agent_t *) b;
+		return (x->identity < y->identity) ? -1 : ( (x->identity == y->identity) ? 0 : 1);
+}
+
+void print_agents(const simulation_t * restrict simulation)
+{
+		qsort(simulation->agents, simulation->size, sizeof(agent_t), cmp_agents);
+		FILE *f = fopen(simulation->parameters.agent_filename, "w");
+		if (f == NULL) {
+				fprintf(stderr, "Cannot open agent file\n");
+				exit(EXIT_FAILURE);
+		}
+		const size_t n = simulation->size;
+		for (const agent_t *a = simulation->agents; a < simulation->agents + n; ++a) {
+				if (fprintf(f, "%zu,%c\n", a->identity, state_char(a->state)) < 0) {
+						fprintf(stderr, "Error writing to agent file.\n");
+						exit(EXIT_FAILURE);
+				}
+		}
+		fclose(f);
+}
+
+void report_header(void)
+{
+		printf("#,iter,S,I,R,V,D,TI,TID\n");
 }
 
 /// Prints out the vital statistics.
-void report(const simulation_t *simulation, int iteration) {
-        int num_susceptible = count_agents_by_state(simulation, SUSCEPTIBLE);
-        int num_infections = count_agents_by_state(simulation, INFECTIOUS);
-        int num_deaths = count_agents_by_state(simulation, DEAD);
-        // We want to send one string to puts to prevent data races on stdout
-        char output[250];
-        snprintf(output, 250,
-                        "Simulation: %d. Iteration: %d. Susceptible: %d. Infections: %d. "
-                        "Deaths: %d\n",
-                        simulation->identity, iteration, num_susceptible, num_infections,
-                        num_deaths);
-        puts(output);
+void report(const simulation_t * restrict simulation, size_t iteration)
+{
+		statistics_t s = get_stats(simulation->agents, simulation->size);
+		// We want to send one string to puts to prevent data races on stdout
+		char output[250];
+		snprintf(output, 250, "%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu",
+						simulation->identity, iteration,
+						s.susceptible, s.infectious, s.recovered, s.vaccinated,
+						s.dead, simulation->total_infections, simulation->infection_deaths);
+		puts(output);
+		if (simulation->parameters.output_agents > 0) {
+				if (iteration > 0 && iteration % simulation->parameters.output_agents == 0)
+						print_agents(simulation);
+		}
 }
 
 /** Simulation engine that repeatedly executes all the events
  *  for specified number of iterations.
  */
-void simulate(simulation_t *simulation, int iterations, double growth_per_day,
-                int events, double death_rate_susceptible,
-                double death_rate_infected) {
-        for (int i = 0; i < iterations; i++) {
-                grow(simulation, growth_per_day);
-                infect(simulation, events);
-                die(simulation, death_rate_susceptible, death_rate_infected);
-                if (i % 100 == 0)
-                        report(simulation, i);
-        }
+void simulate(simulation_t * restrict simulation) {
+		if (simulation->identity == 0)
+				report_header();
+		report(simulation, 0);
+		for (int i = 0; i < simulation->parameters.iterations; i++) {
+				grow(simulation);
+				if (simulation->parameters.infection_method == BOTH) {
+						if (simulation->identity % 2 == 0) {
+								infect_method_one(simulation);
+						} else {
+								infect_method_two(simulation);
+						}
+				} else if (simulation->parameters.infection_method == ONE) {
+						infect_method_one(simulation);
+				} else {
+						infect_method_two(simulation);
+				}
+				recover(simulation);
+				vaccinate(simulation);
+				susceptible(simulation);
+				die(simulation);
+				if (i != 0 && i % 100 == 0)
+						report(simulation, i);
+		}
+		report(simulation, simulation->parameters.iterations);
 }
 
-/**
- * For processing command line arguments
- */
-static struct option long_options[] = {
-        {"simulations", required_argument, 0, 0},
-        {"iterations", required_argument, 0, 0},
-        {"infections", required_argument, 0, 0},
-        {"agents", required_argument, 0, 0},
-        {"growth", required_argument, 0, 0},
-        {"events", required_argument, 0, 0},
-        {"death_rate_susceptible", required_argument, 0, 0},
-        {"death_rate_infected", required_argument, 0, 0},
-        {0, 0, 0, 0}};
-
-/**
- * Structure to hold simulation's parameters.
- */
-struct parameters {
-        int simulations;
-        int iterations;
-        int infections;
-        int agents;
-        int events;
-        double growth;
-        double death_rate_susceptible;
-        double death_rate_infected;
-};
-
-typedef struct parameters parameters_t;
-
-/**
- * Prints help screen if -h command line options specified.
- */
-void print_help(const char *prog) {
-        struct option *it = long_options;
-
-        fprintf(stderr, "%s [options]\n", prog);
-        while (it->name != 0) {
-                fprintf(stderr, "%s  <value>\n", it->name);
-                ++it;
-        }
+void set_default_parameters(parameters_t *p)
+{
+		p->simulations = 20;
+		p->identity = 0;
+		p->iterations = 365 * 4;
+		p->agents = 10000;
+		p->infectious = 10;
+		p->encounters = 100;
+		p->growth = 0.0001;
+		p->death_prob_susceptible = 0.0001;
+		p->death_prob_infectious = 0.001;
+		p->recovery_prob = 0.01;
+		p->vaccination_prob = 0.001;
+		p->regression_prob = 0.0003;
+		p->infection_method = BOTH;
+		p->output_agents = 0;
+		strcpy(p->agent_filename, "agents.csv");
 }
 
-/**
- * Process command line arguments and return parameters.
- */
-parameters_t process_arguments(int argc, char **argv) {
-        parameters_t result;
-        result.simulations = 10;
-        result.iterations = 365 * 4;
-        result.infections = 10;
-        result.agents = 10000;
-        result.events = 20;
-        result.growth = 0.0001;
-        result.death_rate_susceptible = 0.0001;
-        result.death_rate_infected = 0.001;
-        while (1) {
-                int option_index = 0;
-
-                int c = getopt_long(argc, argv, "h", long_options, &option_index);
-
-                if (c == -1)
-                        break;
-
-                if (c == 0) {
-                        const char *s = long_options[option_index].name;
-                        if (strcmp(s, "simulations") == 0) {
-                                result.simulations = atoi(optarg);
-                        } else if (strcmp(s, "iterations") == 0) {
-                                result.iterations = atoi(optarg);
-                        } else if (strcmp(s, "infections") == 0) {
-                                result.infections = atoi(optarg);
-                        } else if (strcmp(s, "agents") == 0) {
-                                result.agents = atoi(optarg);
-                        } else if (strcmp(s, "events") == 0) {
-                                result.events = atoi(optarg);
-                        } else if (strcmp(s, "growth") == 0) {
-                                result.growth = atof(optarg);
-                        } else if (strcmp(s, "death_rate_susceptible") == 0) {
-                                result.death_rate_susceptible = atof(optarg);
-                        } else if (strcmp(s, "death_rate_infected") == 0) {
-                                result.death_rate_infected = atof(optarg);
-                        } else {
-                                fprintf(stderr, "Unknown options: %s\n", s);
-                                exit(EXIT_FAILURE);
-                        }
-                }
-                if (c == 'h') {
-                        print_help(argv[0]);
-                        exit(EXIT_SUCCESS);
-                }
-        }
-
-        if (optind < argc) {
-                printf("non-option ARGV-elements: ");
-                while (optind < argc)
-                        printf("%s ", argv[optind++]);
-                printf("\n");
-        }
-        return result;
-}
-
-/**
- * Runs one simulation. Used by Boost pool.
- */
-void run_one_simulation(gpointer data, gpointer user_data) {
-        int *i = (int *)data;
-        rng_alloc(*i + 3);
-        parameters_t *p = (parameters_t *)user_data;
-
-        simulation_t simulation = new_simulation(*i, p->agents, p->infections);
-        simulate(&simulation, p->iterations, p->growth, p->events,
-                        p->death_rate_susceptible, p->death_rate_infected);
-        report(&simulation, p->iterations);
-        free(simulation.agents);
-        gsl_rng_free(rng);
-}
-
-/**
- * Gets command line arguments and then runs the simulations in a
- * parallel pool.
- */
-int main(int argc, char **argv) {
-        parameters_t parameters = process_arguments(argc, argv);
-
-        GThreadPool *pool;
-        GError *error = NULL;
-
-        pool = g_thread_pool_new((GFunc)run_one_simulation, (gpointer)&parameters,
-                        g_get_num_processors(), true, &error);
-        if (error != NULL) {
-                fprintf(stderr, "Problem initializing thread pool: %s %d\n", __FILE__,
-                                __LINE__);
-                exit(EXIT_FAILURE);
-        }
-        int *arr = malloc(sizeof(int) * parameters.simulations);
-        if (arr == NULL) {
-                fprintf(stderr, "Memory allocation error: %s %d\n", __FILE__, __LINE__);
-                exit(EXIT_FAILURE);
-        }
-        for (int i = 0; i < parameters.simulations; ++i) {
-                *(arr + i) = i;
-                g_thread_pool_push(pool, arr + i, &error);
-        }
-        if (error != NULL) {
-                fprintf(stderr, "Problem executing thread pool: %s %d\n", __FILE__,
-                                __LINE__);
-                exit(EXIT_FAILURE);
-        }
-        g_thread_pool_free(pool, false, true);
-        free(arr);
-        return 0;
-}

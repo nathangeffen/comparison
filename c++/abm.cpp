@@ -17,8 +17,16 @@
 
 #include "abm.hpp"
 
-std::random_device rd;
-thread_local std::default_random_engine rng(rd());
+
+void shuffle(std::vector<Agent> &agents, Rng& rng)
+{
+		for (size_t i = agents.size() - 1; i > 0; --i) {
+				size_t j = rng.to(i + 1);
+				Agent t = agents[j];
+				agents[j] = agents[i];
+				agents[i] = t;
+		}
+}
 
 /// Displays the first letter of a state in upper case
 std::ostream& operator<<(std::ostream& stream,

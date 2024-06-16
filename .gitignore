@@ -1,9 +1,16 @@
 *.csv
 *~
 abm
+abm-debug
+abm-release
 *.txt
 *.lock
 *.zip
+*.o
+*.cache
+*.ps
+*.plist
+*.s
 \#*
 *\#
 runsim
