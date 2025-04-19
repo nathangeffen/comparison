@@ -7,6 +7,7 @@
 #include <glib.h>
 
 struct rng {
+		bool from_file;
 		uint64_t seed;
 };
 
@@ -67,6 +68,7 @@ struct parameters {
 		infection_method_t infection_method;
 		int output_agents;
 		char agent_filename[255];
+		bool random_file;
 };
 
 typedef struct parameters parameters_t;
@@ -85,7 +87,8 @@ struct simulation {
 
 typedef struct simulation simulation_t;
 
-void rng_init(rng_t *rng, uint64_t seed);
+void read_randoms(void);
+void rng_init(rng_t *rng, uint64_t seed, bool from_file);
 uint64_t rng_uint64_t(rng_t *rng);
 uint64_t rng_to(rng_t *rng, uint64_t max);
 double rng_double(rng_t *rng);

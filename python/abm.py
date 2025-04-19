@@ -47,7 +47,7 @@ class InfectionMethod(Enum):
 
 class Parameters:
 
-    def __init(self):
+    def __init__(self):
         self.simulations = 20
         self.agents = 10000
         self.infections = 10

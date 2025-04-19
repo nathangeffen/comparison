@@ -12,4 +12,5 @@ clap = { version = "4.0", features = ["derive"] }
 abm = { path = "abm" }
 
 [profile.release]
-debug = true
+codegen-units = 1
+lto = "fat"

@@ -43,6 +43,8 @@ parameters_t process_arguments(int argc, char **argv)
 						"Iteration frequency to write out agents (0 = never)"},
 				{ "agent_filename", 0, 0, G_OPTION_ARG_FILENAME, &result.agent_filename,
 						"Agent output file name"},
+				{ "random_file", 0, 0, G_OPTION_ARG_NONE, &result.random_file,
+						"Use random numbers from rand.txt"},
 				G_OPTION_ENTRY_NULL
 		};
 
@@ -84,6 +86,9 @@ int main(int argc, char **argv)
 
 		parameters_t parameters = process_arguments(argc, argv);
 
+		if (parameters.random_file == true) {
+				read_randoms();
+		}
 		size_t *arr = malloc(sizeof(size_t) * parameters.simulations);
 		if (arr == NULL) {
 				fprintf(stderr, "Out of memory: %s %d", __FILE__,

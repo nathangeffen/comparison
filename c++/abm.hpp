@@ -25,8 +25,6 @@
 
 struct Rng {
 		uint64_t seed;
-		const uint64_t a = 22695477;
-		const uint64_t c = 1;
 		const uint64_t m = 32768;
 
 		Rng(uint64_t s) {

@@ -1,7 +1,7 @@
 /**
  * Simple agent-based simulation of an infectious disease.
  */
-
+#define _GNU_SOURCE
 #include <assert.h>
 #include <math.h>
 #include <stdbool.h>
@@ -14,13 +14,42 @@
 
 #include "abm.h"
 
-void rng_init(rng_t *rng, uint64_t seed)
+#define NUM_RANDS 10000000
+
+static uint64_t rngarr[NUM_RANDS]  = {0};
+
+void read_randoms(void)
 {
-		rng->seed = seed;
+		size_t n = 0;
+           char *line = NULL;
+           size_t len = 0;
+
+		   FILE *stream = fopen("../rand.txt", "r");
+
+           if (stream == NULL) {
+               perror("fopen");
+               exit(EXIT_FAILURE);
+           }
+
+           while (getline(&line, &len, stream) != -1 && n < NUM_RANDS) {
+				rngarr[n] = atoll(line);
+				printf("%zu %lu\n", n, rngarr[n]);
+				++n;
+           }
+           free(line);
+		   fclose(stream);
 }
 
-const uint64_t a = 22695477;
-const uint64_t c = 1;
+void rng_init(rng_t *rng, uint64_t seed, bool from_file)
+{
+		if (from_file == false) {
+				rng->seed = seed;
+		}
+		else {
+				rng->seed = seed * 500000;
+		}
+}
+
 const uint64_t m = 32768;
 
 uint64_t rng_uint64_t(rng_t *rng)
@@ -112,7 +141,7 @@ simulation_t new_simulation(size_t identity, const parameters_t *parameters) {
 		simulation_t s;
 		s.parameters = *parameters;
 		s.identity = identity;
-		rng_init(&s.rng, identity);
+		rng_init(&s.rng, identity, parameters->random_file);
 		size_t n = parameters->agents * 3 / 2;
 		n = n < 10 ? 10 : n;
 		s.agents = malloc(n * sizeof(*s.agents));
@@ -361,5 +390,6 @@ void set_default_parameters(parameters_t *p)
 		p->infection_method = BOTH;
 		p->output_agents = 0;
 		strcpy(p->agent_filename, "agents.csv");
+		p->random_file = false;
 }
 
